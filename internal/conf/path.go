@@ -134,6 +134,7 @@ func (pconf *PathConf) check(conf *Conf, name string) error {
 		}
 		pconf.Regexp = pathRegexp
 	}
+	// 解析配置文件
 
 	switch {
 	case pconf.Source == "publisher":
@@ -171,6 +172,8 @@ func (pconf *PathConf) check(conf *Conf, name string) error {
 
 	case strings.HasPrefix(pconf.Source, "http://") ||
 		strings.HasPrefix(pconf.Source, "https://"):
+		// 这里默认使用http或者https协议的就是hls协议, 但是其实还有可能是http-flv, 因此需要进行额外的区分
+		// TODO: 区别hls和http-flv两种协议, 并进行配置的检查.
 		if pconf.Regexp != nil {
 			return fmt.Errorf("a path with a regular expression (or path 'all') cannot have a HLS source. use another path")
 		}

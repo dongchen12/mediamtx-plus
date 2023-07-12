@@ -74,11 +74,12 @@ func itoa(i int, wid int) []byte {
 	return b[bp:]
 }
 
-func writeTime(buf *bytes.Buffer, t time.Time, useColor bool) {
+func writeTime(buf *bytes.Buffer, doColor bool) {
 	var intbuf bytes.Buffer
 
 	// date
-	year, month, day := t.Date()
+	now := time.Now()
+	year, month, day := now.Date()
 	intbuf.Write(itoa(year, 4))
 	intbuf.WriteByte('/')
 	intbuf.Write(itoa(int(month), 2))
@@ -87,7 +88,7 @@ func writeTime(buf *bytes.Buffer, t time.Time, useColor bool) {
 	intbuf.WriteByte(' ')
 
 	// time
-	hour, min, sec := t.Clock()
+	hour, min, sec := now.Clock()
 	intbuf.Write(itoa(hour, 2))
 	intbuf.WriteByte(':')
 	intbuf.Write(itoa(min, 2))
@@ -95,38 +96,38 @@ func writeTime(buf *bytes.Buffer, t time.Time, useColor bool) {
 	intbuf.Write(itoa(sec, 2))
 	intbuf.WriteByte(' ')
 
-	if useColor {
+	if doColor {
 		buf.WriteString(color.RenderString(color.Gray.Code(), intbuf.String()))
 	} else {
 		buf.WriteString(intbuf.String())
 	}
 }
 
-func writeLevel(buf *bytes.Buffer, level Level, useColor bool) {
+func writeLevel(buf *bytes.Buffer, level Level, doColor bool) {
 	switch level {
 	case Debug:
-		if useColor {
+		if doColor {
 			buf.WriteString(color.RenderString(color.Debug.Code(), "DEB"))
 		} else {
 			buf.WriteString("DEB")
 		}
 
 	case Info:
-		if useColor {
+		if doColor {
 			buf.WriteString(color.RenderString(color.Green.Code(), "INF"))
 		} else {
 			buf.WriteString("INF")
 		}
 
 	case Warn:
-		if useColor {
+		if doColor {
 			buf.WriteString(color.RenderString(color.Warn.Code(), "WAR"))
 		} else {
 			buf.WriteString("WAR")
 		}
 
 	case Error:
-		if useColor {
+		if doColor {
 			buf.WriteString(color.RenderString(color.Error.Code(), "ERR"))
 		} else {
 			buf.WriteString("ERR")
@@ -149,9 +150,7 @@ func (lh *Logger) Log(level Level, format string, args ...interface{}) {
 	lh.mutex.Lock()
 	defer lh.mutex.Unlock()
 
-	t := time.Now()
-
 	for _, dest := range lh.destinations {
-		dest.log(t, level, format, args...)
+		dest.log(level, format, args...)
 	}
 }

@@ -627,7 +627,7 @@ func (pa *path) onDemandPublisherStop() {
 }
 
 func (pa *path) sourceSetReady(medias media.Medias, allocateEncoder bool) error {
-	stream, err := newStream(
+	stream, err := newStream( // 在服务器内部创建一个新的流对象
 		pa.udpMaxPayloadSize,
 		medias,
 		allocateEncoder,

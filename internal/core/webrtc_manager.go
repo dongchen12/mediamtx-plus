@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,13 +24,46 @@ import (
 	"github.com/bluenviron/mediamtx/internal/logger"
 )
 
-const (
-	webrtcHandshakeTimeout     = 10 * time.Second
-	webrtcTrackGatherTimeout   = 2 * time.Second
-	webrtcPayloadMaxSize       = 1188 // 1200 - 12 (RTP header)
-	webrtcStreamID             = "mediamtx"
-	webrtcTurnSecretExpiration = 24 * 3600 * time.Second
-)
+func iceServersToLinkHeader(iceServers []webrtc.ICEServer) []string {
+	ret := make([]string, len(iceServers))
+
+	for i, server := range iceServers {
+		link := "<" + server.URLs[0] + ">; rel=\"ice-server\""
+		if server.Username != "" {
+			link += "; username=\"" + server.Username + "\"" +
+				"; credential=\"" + server.Credential.(string) + "\"; credential-type=\"password\""
+		}
+		ret[i] = link
+	}
+
+	return ret
+}
+
+var reLink = regexp.MustCompile(`^<(.+?)>; rel="ice-server"(; username="(.+?)"` +
+	`; credential="(.+?)"; credential-type="password")?`)
+
+func linkHeaderToIceServers(link []string) []webrtc.ICEServer {
+	var ret []webrtc.ICEServer
+
+	for _, li := range link {
+		m := reLink.FindStringSubmatch(li)
+		if m != nil {
+			s := webrtc.ICEServer{
+				URLs: []string{m[1]},
+			}
+
+			if m[3] != "" {
+				s.Username = m[3]
+				s.Credential = m[4]
+				s.CredentialType = webrtc.ICECredentialTypePassword
+			}
+
+			ret = append(ret, s)
+		}
+	}
+
+	return ret
+}
 
 func randInt63() int64 {
 	var b [8]byte
@@ -95,11 +130,14 @@ type webRTCSessionNewRes struct {
 }
 
 type webRTCSessionNewReq struct {
-	pathName   string
-	remoteAddr string
-	offer      []byte
-	publish    bool
-	res        chan webRTCSessionNewRes
+	pathName     string
+	remoteAddr   string
+	offer        []byte
+	publish      bool
+	videoCodec   string
+	audioCodec   string
+	videoBitrate string
+	res          chan webRTCSessionNewRes
 }
 
 type webRTCSessionAddCandidatesRes struct {
@@ -120,7 +158,7 @@ type webRTCManagerParent interface {
 type webRTCManager struct {
 	allowOrigin     string
 	trustedProxies  conf.IPsOrCIDRs
-	iceServers      []conf.WebRTCICEServer
+	iceServers      []string
 	readBufferCount int
 	pathManager     *pathManager
 	metrics         *metrics
@@ -157,7 +195,7 @@ func newWebRTCManager(
 	serverCert string,
 	allowOrigin string,
 	trustedProxies conf.IPsOrCIDRs,
-	iceServers []conf.WebRTCICEServer,
+	iceServers []string,
 	readTimeout conf.StringDuration,
 	readBufferCount int,
 	pathManager *pathManager,
@@ -313,7 +351,7 @@ outer:
 		case req := <-m.chAPISessionsGet:
 			sx := m.findSessionByUUID(req.uuid)
 			if sx == nil {
-				req.res <- webRTCManagerAPISessionsGetRes{err: errAPINotFound}
+				req.res <- webRTCManagerAPISessionsGetRes{err: fmt.Errorf("not found")}
 				continue
 			}
 
@@ -322,7 +360,7 @@ outer:
 		case req := <-m.chAPIConnsKick:
 			sx := m.findSessionByUUID(req.uuid)
 			if sx == nil {
-				req.res <- webRTCManagerAPISessionsKickRes{err: errAPINotFound}
+				req.res <- webRTCManagerAPISessionsKickRes{fmt.Errorf("not found")}
 				continue
 			}
 
@@ -360,21 +398,35 @@ func (m *webRTCManager) findSessionByUUID(uuid uuid.UUID) *webRTCSession {
 	return nil
 }
 
-func (m *webRTCManager) generateICEServers() []webrtc.ICEServer {
+func (m *webRTCManager) genICEServers() []webrtc.ICEServer {
 	ret := make([]webrtc.ICEServer, len(m.iceServers))
-	for i, server := range m.iceServers {
-		if server.Username == "AUTH_SECRET" {
-			expireDate := time.Now().Add(webrtcTurnSecretExpiration).Unix()
-			server.Username = strconv.FormatInt(expireDate, 10) + ":" + randomTurnUser()
-			h := hmac.New(sha1.New, []byte(server.Password))
-			h.Write([]byte(server.Username))
-			server.Password = base64.StdEncoding.EncodeToString(h.Sum(nil))
-		}
+	for i, s := range m.iceServers {
+		parts := strings.Split(s, ":")
+		if len(parts) == 5 {
+			if parts[1] == "AUTH_SECRET" {
+				s := webrtc.ICEServer{
+					URLs: []string{parts[0] + ":" + parts[3] + ":" + parts[4]},
+				}
 
-		ret[i] = webrtc.ICEServer{
-			URLs:       []string{server.URL},
-			Username:   server.Username,
-			Credential: server.Password,
+				expireDate := time.Now().Add(24 * 3600 * time.Second).Unix()
+				s.Username = strconv.FormatInt(expireDate, 10) + ":" + randomTurnUser()
+
+				h := hmac.New(sha1.New, []byte(parts[2]))
+				h.Write([]byte(s.Username))
+				s.Credential = base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+				ret[i] = s
+			} else {
+				ret[i] = webrtc.ICEServer{
+					URLs:       []string{parts[0] + ":" + parts[3] + ":" + parts[4]},
+					Username:   parts[1],
+					Credential: parts[2],
+				}
+			}
+		} else {
+			ret[i] = webrtc.ICEServer{
+				URLs: []string{s},
+			}
 		}
 	}
 	return ret

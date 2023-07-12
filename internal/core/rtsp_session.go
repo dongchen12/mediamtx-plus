@@ -37,14 +37,13 @@ type rtspSession struct {
 	pathManager     rtspSessionPathManager
 	parent          rtspSessionParent
 
-	uuid      uuid.UUID
-	created   time.Time
-	path      *path
-	stream    *stream
-	onReadCmd *externalcmd.Cmd // read
-	mutex     sync.Mutex
-	state     gortsplib.ServerSessionState
-	pathName  string
+	uuid       uuid.UUID
+	created    time.Time
+	path       *path
+	stream     *stream
+	state      gortsplib.ServerSessionState
+	stateMutex sync.Mutex
+	onReadCmd  *externalcmd.Cmd // read
 }
 
 func newRTSPSession(
@@ -76,6 +75,12 @@ func newRTSPSession(
 // Close closes a Session.
 func (s *rtspSession) close() {
 	s.session.Close()
+}
+
+func (s *rtspSession) safeState() gortsplib.ServerSessionState {
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
+	return s.state
 }
 
 func (s *rtspSession) remoteAddr() net.Addr {
@@ -152,10 +157,9 @@ func (s *rtspSession) onAnnounce(c *rtspConn, ctx *gortsplib.ServerHandlerOnAnno
 
 	s.path = res.path
 
-	s.mutex.Lock()
+	s.stateMutex.Lock()
 	s.state = gortsplib.ServerSessionStatePreRecord
-	s.pathName = ctx.Path
-	s.mutex.Unlock()
+	s.stateMutex.Unlock()
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
@@ -238,10 +242,9 @@ func (s *rtspSession) onSetup(c *rtspConn, ctx *gortsplib.ServerHandlerOnSetupCt
 		s.path = res.path
 		s.stream = res.stream
 
-		s.mutex.Lock()
+		s.stateMutex.Lock()
 		s.state = gortsplib.ServerSessionStatePrePlay
-		s.pathName = ctx.Path
-		s.mutex.Unlock()
+		s.stateMutex.Unlock()
 
 		return &base.Response{
 			StatusCode: base.StatusOK,
@@ -278,9 +281,9 @@ func (s *rtspSession) onPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Respons
 				})
 		}
 
-		s.mutex.Lock()
+		s.stateMutex.Lock()
 		s.state = gortsplib.ServerSessionStatePlay
-		s.mutex.Unlock()
+		s.stateMutex.Unlock()
 	}
 
 	return &base.Response{
@@ -320,9 +323,9 @@ func (s *rtspSession) onRecord(ctx *gortsplib.ServerHandlerOnRecordCtx) (*base.R
 		}
 	}
 
-	s.mutex.Lock()
+	s.stateMutex.Lock()
 	s.state = gortsplib.ServerSessionStateRecord
-	s.mutex.Unlock()
+	s.stateMutex.Unlock()
 
 	return &base.Response{
 		StatusCode: base.StatusOK,
@@ -338,16 +341,16 @@ func (s *rtspSession) onPause(_ *gortsplib.ServerHandlerOnPauseCtx) (*base.Respo
 			s.onReadCmd.Close()
 		}
 
-		s.mutex.Lock()
+		s.stateMutex.Lock()
 		s.state = gortsplib.ServerSessionStatePrePlay
-		s.mutex.Unlock()
+		s.stateMutex.Unlock()
 
 	case gortsplib.ServerSessionStateRecord:
 		s.path.publisherStop(pathPublisherStopReq{author: s})
 
-		s.mutex.Lock()
+		s.stateMutex.Lock()
 		s.state = gortsplib.ServerSessionStatePreRecord
-		s.mutex.Unlock()
+		s.stateMutex.Unlock()
 	}
 
 	return &base.Response{
@@ -384,15 +387,12 @@ func (s *rtspSession) onDecodeError(ctx *gortsplib.ServerHandlerOnDecodeErrorCtx
 }
 
 func (s *rtspSession) apiItem() *apiRTSPSession {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	return &apiRTSPSession{
 		ID:         s.uuid,
 		Created:    s.created,
 		RemoteAddr: s.remoteAddr().String(),
 		State: func() string {
-			switch s.state {
+			switch s.safeState() {
 			case gortsplib.ServerSessionStatePrePlay,
 				gortsplib.ServerSessionStatePlay:
 				return "read"
@@ -403,7 +403,6 @@ func (s *rtspSession) apiItem() *apiRTSPSession {
 			}
 			return "idle"
 		}(),
-		Path:          s.pathName,
 		BytesReceived: s.session.BytesReceived(),
 		BytesSent:     s.session.BytesSent(),
 	}

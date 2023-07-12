@@ -1,9 +1,5 @@
 package logger
 
-import (
-	"time"
-)
-
 // Destination is a log destination.
 type Destination int
 
@@ -19,6 +15,6 @@ const (
 )
 
 type destination interface {
-	log(time.Time, Level, string, ...interface{})
+	log(Level, string, ...interface{})
 	close()
 }

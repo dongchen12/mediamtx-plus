@@ -3,6 +3,7 @@ package core
 import (
 	_ "embed"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	gopath "path"
@@ -41,6 +42,7 @@ func newHLSHTTPServer( //nolint:dupl
 	pathManager *pathManager,
 	parent hlsHTTPServerParent,
 ) (*hlsHTTPServer, error) {
+	// 认证
 	if encryption {
 		if serverCert == "" {
 			return nil, fmt.Errorf("server cert is missing")
@@ -50,6 +52,7 @@ func newHLSHTTPServer( //nolint:dupl
 		serverCert = ""
 	}
 
+	// 创建Server对象
 	s := &hlsHTTPServer{
 		allowOrigin: allowOrigin,
 		pathManager: pathManager,
@@ -59,6 +62,7 @@ func newHLSHTTPServer( //nolint:dupl
 	router := gin.New()
 	httpSetTrustedProxies(router, trustedProxies)
 
+	// 这里似乎会给服务器注册一个路由为空时的处理函数.
 	router.NoRoute(httpLoggerMiddleware(s), httpServerHeaderMiddleware, s.onRequest)
 
 	var err error
@@ -85,13 +89,14 @@ func (s *hlsHTTPServer) close() {
 }
 
 func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
+	//log.Println("Function onRequest invoked...")
 	ctx.Writer.Header().Set("Access-Control-Allow-Origin", s.allowOrigin)
 	ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 
 	switch ctx.Request.Method {
 	case http.MethodOptions:
 		ctx.Writer.Header().Set("Access-Control-Allow-Methods", "OPTIONS, GET")
-		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Range")
+		ctx.Writer.Header().Set("Access-Control-Allow-Headers", "Range")
 		ctx.Writer.WriteHeader(http.StatusOK)
 		return
 
@@ -101,12 +106,16 @@ func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
 		return
 	}
 
-	// remove leading prefix
+	//log.Println("Initial URL path:", ctx.Request.URL.Path)
+	// remove leading prefix '/'
 	pa := ctx.Request.URL.Path[1:]
+
+	//log.Println("Content of pa:" + pa)
 
 	var dir string
 	var fname string
 
+	// 获取流名称, 获取m3u8索引文件名称.
 	switch {
 	case pa == "", pa == "favicon.ico":
 		return
@@ -116,10 +125,11 @@ func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
 		strings.HasSuffix(pa, ".mp4") ||
 		strings.HasSuffix(pa, ".mp"):
 		dir, fname = gopath.Dir(pa), gopath.Base(pa)
+		//log.Println("Dir is:", dir, ", fname is:", fname)
 
 		if strings.HasSuffix(fname, ".mp") {
 			fname += "4"
-		}
+		} // 把mp尾缀改成mp4
 
 	default:
 		dir, fname = pa, ""
@@ -142,6 +152,7 @@ func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
 
 	user, pass, hasCredentials := ctx.Request.BasicAuth()
 
+	// 这里似乎是用来验证的, 如果我不需要验证怎么办呢?
 	res := s.pathManager.getPathConf(pathGetPathConfReq{
 		name:    dir,
 		publish: false,
@@ -169,15 +180,16 @@ func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
 		ctx.Writer.WriteHeader(http.StatusNotFound)
 		return
 	}
-
 	switch fname {
 	case "":
 		ctx.Writer.Header().Set("Content-Type", "text/html")
 		ctx.Writer.WriteHeader(http.StatusOK)
 		ctx.Writer.Write(hlsIndex)
+		log.Println("HlsIndex:", hlsIndex)
 
 	default:
-		s.parent.handleRequest(hlsMuxerHandleRequestReq{
+		//log.Println("Reached fname default.")
+		s.parent.handleRequest(hlsMuxerHandleRequestReq{ // 发送一个hls处理请求
 			path: dir,
 			file: fname,
 			ctx:  ctx,

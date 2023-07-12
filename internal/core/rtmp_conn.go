@@ -48,7 +48,7 @@ func getRTMPWriteFunc(medi *media.Media, format formats.Format, stream *stream) 
 	case *formats.H264:
 		return func(msg interface{}) error {
 			tmsg := msg.(*message.Video)
-
+			//fmt.Printf("Reached here! But the codec of the video is: %s.\n\n", format.Codec())
 			switch tmsg.Type {
 			case message.VideoTypeConfig:
 				var conf h264conf.Conf
@@ -210,13 +210,12 @@ type rtmpConn struct {
 	pathManager         rtmpConnPathManager
 	parent              rtmpConnParent
 
-	ctx       context.Context
-	ctxCancel func()
-	uuid      uuid.UUID
-	created   time.Time
-	mutex     sync.Mutex
-	state     rtmpConnState
-	pathName  string
+	ctx        context.Context
+	ctxCancel  func()
+	uuid       uuid.UUID
+	created    time.Time
+	state      rtmpConnState
+	stateMutex sync.Mutex
 }
 
 func newRTMPConn(
@@ -278,6 +277,12 @@ func (c *rtmpConn) Log(level logger.Level, format string, args ...interface{}) {
 
 func (c *rtmpConn) ip() net.IP {
 	return c.nconn.RemoteAddr().(*net.TCPAddr).IP
+}
+
+func (c *rtmpConn) safeState() rtmpConnState {
+	c.stateMutex.Lock()
+	defer c.stateMutex.Unlock()
+	return c.state
 }
 
 func (c *rtmpConn) run() {
@@ -375,10 +380,9 @@ func (c *rtmpConn) runRead(ctx context.Context, u *url.URL) error {
 
 	defer res.path.readerRemove(pathReaderRemoveReq{author: c})
 
-	c.mutex.Lock()
+	c.stateMutex.Lock()
 	c.state = rtmpConnStateRead
-	c.pathName = pathName
-	c.mutex.Unlock()
+	c.stateMutex.Unlock()
 
 	ringBuffer, _ := ringbuffer.New(uint64(c.readBufferCount))
 	go func() {
@@ -790,10 +794,9 @@ func (c *rtmpConn) runPublish(u *url.URL) error {
 
 	defer res.path.publisherRemove(pathPublisherRemoveReq{author: c})
 
-	c.mutex.Lock()
+	c.stateMutex.Lock()
 	c.state = rtmpConnStatePublish
-	c.pathName = pathName
-	c.mutex.Unlock()
+	c.stateMutex.Unlock()
 
 	videoFormat, audioFormat, err := c.conn.ReadTracks()
 	if err != nil {
@@ -889,15 +892,12 @@ func (c *rtmpConn) apiSourceDescribe() pathAPISourceOrReader {
 }
 
 func (c *rtmpConn) apiItem() *apiRTMPConn {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	return &apiRTMPConn{
 		ID:         c.uuid,
 		Created:    c.created,
 		RemoteAddr: c.remoteAddr().String(),
 		State: func() string {
-			switch c.state {
+			switch c.safeState() {
 			case rtmpConnStateRead:
 				return "read"
 
@@ -906,7 +906,6 @@ func (c *rtmpConn) apiItem() *apiRTMPConn {
 			}
 			return "idle"
 		}(),
-		Path:          c.pathName,
 		BytesReceived: c.conn.BytesReceived(),
 		BytesSent:     c.conn.BytesSent(),
 	}

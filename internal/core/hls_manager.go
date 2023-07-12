@@ -33,6 +33,7 @@ type hlsManagerParent interface {
 	logger.Writer
 }
 
+// 他这个hls服务器是onDemand的, 也就是说只有当有用户在拉流的时候才开启这个服务器.
 type hlsManager struct {
 	externalAuthenticationURL string
 	alwaysRemux               bool
@@ -84,32 +85,37 @@ func newHLSManager(
 	metrics *metrics,
 	parent hlsManagerParent,
 ) (*hlsManager, error) {
+	// 创建一个子context
 	ctx, ctxCancel := context.WithCancel(parentCtx)
 
+	// 创建一个新的hls实例
 	m := &hlsManager{
 		externalAuthenticationURL: externalAuthenticationURL,
 		alwaysRemux:               alwaysRemux,
 		variant:                   variant,
 		segmentCount:              segmentCount,
 		segmentDuration:           segmentDuration,
-		partDuration:              partDuration,
+		partDuration:              partDuration, // 单个ts碎片时长
 		segmentMaxSize:            segmentMaxSize,
-		directory:                 directory,
+		directory:                 directory, // ts碎片保存本地路径
 		readBufferCount:           readBufferCount,
 		pathManager:               pathManager,
 		parent:                    parent,
 		metrics:                   metrics,
 		ctx:                       ctx,
-		ctxCancel:                 ctxCancel,
-		muxers:                    make(map[string]*hlsMuxer),
-		chPathSourceReady:         make(chan *path),
-		chPathSourceNotReady:      make(chan *path),
-		chHandleRequest:           make(chan hlsMuxerHandleRequestReq),
-		chMuxerClose:              make(chan *hlsMuxer),
-		chAPIMuxerList:            make(chan hlsManagerAPIMuxersListReq),
-		chAPIMuxerGet:             make(chan hlsManagerAPIMuxersGetReq),
+		ctxCancel:                 ctxCancel,                  // 服务器子模块context cancel
+		muxers:                    make(map[string]*hlsMuxer), // hls推流器, 每个流都需要一个muxer
+		// 剩下的都是一些用于传递消息的通道
+		chPathSourceReady:    make(chan *path),
+		chPathSourceNotReady: make(chan *path),
+		chHandleRequest:      make(chan hlsMuxerHandleRequestReq),
+		chMuxerClose:         make(chan *hlsMuxer),
+		chAPIMuxerList:       make(chan hlsManagerAPIMuxersListReq),
+		chAPIMuxerGet:        make(chan hlsManagerAPIMuxersGetReq),
 	}
 
+	// 创建一个独立的http server提供hls服务
+	// TODO: 还是没弄清楚, 到底包是怎么从rtsp那里传过来的...
 	var err error
 	m.httpServer, err = newHLSHTTPServer(
 		address,
@@ -209,7 +215,7 @@ outer:
 		case req := <-m.chAPIMuxerGet:
 			muxer, ok := m.muxers[req.name]
 			if !ok {
-				req.res <- hlsManagerAPIMuxersGetRes{err: errAPINotFound}
+				req.res <- hlsManagerAPIMuxersGetRes{err: fmt.Errorf("not found")}
 				continue
 			}
 
@@ -309,11 +315,11 @@ func (m *hlsManager) apiMuxersGet(name string) (*apiHLSMuxer, error) {
 }
 
 func (m *hlsManager) handleRequest(req hlsMuxerHandleRequestReq) {
-	req.res = make(chan *hlsMuxer)
+	req.res = make(chan *hlsMuxer) // 创建一个hls chan.
 
 	select {
-	case m.chHandleRequest <- req:
-		muxer := <-req.res
+	case m.chHandleRequest <- req: // 把需要处理的请求放进这个chan中
+		muxer := <-req.res // 处理的结果会放在这个chan中
 		if muxer != nil {
 			req.ctx.Request.URL.Path = req.file
 			muxer.handleRequest(req.ctx)

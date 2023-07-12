@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,7 +83,7 @@ type hlsMuxer struct {
 	requests        []*hlsMuxerHandleRequestReq
 	bytesSent       *uint64
 
-	// in
+	// in, 用来接收来自其他地方的视频包
 	chRequest chan *hlsMuxerHandleRequestReq
 }
 
@@ -102,8 +103,12 @@ func newHLSMuxer(
 	pathManager *pathManager,
 	parent hlsMuxerParent,
 ) *hlsMuxer {
+	// 在当前父context下创建一个子context
 	ctx, ctxCancel := context.WithCancel(parentCtx)
 
+	// 这个muxer相当于另一个服务器
+	log.Println("Creating hls muxer on remoteAddr: ", remoteAddr, ", segmentCount: ", segmentCount, ", segmentDuration: ", segmentDuration, ", "+
+		"")
 	m := &hlsMuxer{
 		remoteAddr:                remoteAddr,
 		externalAuthenticationURL: externalAuthenticationURL,
@@ -194,6 +199,7 @@ func (m *hlsMuxer) run() {
 					req.res <- m
 
 				default:
+					//m.parent.Log(logger.Info, "req received, filename: ", req.file, " path: ", req.path)
 					m.requests = append(m.requests, req)
 				}
 
@@ -566,6 +572,7 @@ func (m *hlsMuxer) runWriter() error {
 }
 
 func (m *hlsMuxer) handleRequest(ctx *gin.Context) {
+
 	atomic.StoreInt64(m.lastRequestTime, time.Now().UnixNano())
 
 	w := &responseWriterWithCounter{

@@ -46,6 +46,7 @@ func (ts *testHTTPAuthenticator) close() {
 	ts.s.Shutdown(context.Background())
 }
 
+// 这是一个用于认证的函数
 func (ts *testHTTPAuthenticator) onAuth(ctx *gin.Context) {
 	var in struct {
 		IP       string `json:"ip"`
@@ -105,18 +106,23 @@ func TestHLSReadNotFound(t *testing.T) {
 	require.Equal(t, true, ok)
 	defer p.Close()
 
+	// 创建http client并发送请求
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:8888/stream/", nil)
 	require.NoError(t, err)
 
 	hc := &http.Client{Transport: &http.Transport{}}
 
 	res, err := hc.Do(req)
+
 	require.NoError(t, err)
 	defer res.Body.Close()
+	// 要求返回的是NotFound响应
 	require.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
+// 测试通过HLS读取
 func TestHLSRead(t *testing.T) {
+	// 创建一个新的core实例
 	p, ok := newInstance("hlsAlwaysRemux: yes\n" +
 		"paths:\n" +
 		"  all:\n")
@@ -166,6 +172,7 @@ func TestHLSRead(t *testing.T) {
 	hc := &http.Client{Transport: &http.Transport{}}
 
 	cnt := httpPullFile(t, hc, "http://localhost:8888/stream/index.m3u8")
+	// 测试拉到的文件是否和下面的聂蓉一样
 	require.Equal(t, "#EXTM3U\n"+
 		"#EXT-X-VERSION:9\n"+
 		"#EXT-X-INDEPENDENT-SEGMENTS\n"+

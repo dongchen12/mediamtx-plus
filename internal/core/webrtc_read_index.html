@@ -25,10 +25,6 @@ html, body {
 
 const restartPause = 2000;
 
-const unquoteCredential = (v) => (
-    JSON.parse(`"${v}"`)
-);
-
 const linkToIceServers = (links) => (
     (links !== null) ? links.split(', ').map((link) => {
         const m = link.match(/^<(.+?)>; rel="ice-server"(; username="(.*?)"; credential="(.*?)"; credential-type="password")?/i);
@@ -37,8 +33,8 @@ const linkToIceServers = (links) => (
         };
 
         if (m[3] !== undefined) {
-            ret.username = unquoteCredential(m[3]);
-            ret.credential = unquoteCredential(m[4]);
+            ret.username = m[3];
+            ret.credential = m[4];
             ret.credentialType = "password";
         }
 
@@ -136,36 +132,34 @@ class WHEPClient {
         };
 
         this.pc.createOffer()
-            .then((offer) => this.onLocalOffer(offer));
-    }
+            .then((desc) => {
+                this.offerData = parseOffer(desc.sdp);
+                this.pc.setLocalDescription(desc);
 
-    onLocalOffer(offer) {
-        this.offerData = parseOffer(offer.sdp);
-        this.pc.setLocalDescription(offer);
+                console.log("sending offer");
 
-        console.log("sending offer");
-
-        fetch(new URL('whep', window.location.href) + window.location.search, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/sdp',
-            },
-            body: offer.sdp,
-        })
-            .then((res) => {
-                if (res.status !== 201) {
-                    throw new Error('bad status code');
-                }
-                this.eTag = res.headers.get('E-Tag');
-                return res.text();
-            })
-            .then((sdp) => this.onRemoteAnswer(new RTCSessionDescription({
-                type: 'answer',
-                sdp,
-            })))
-            .catch((err) => {
-                console.log('error: ' + err);
-                this.scheduleRestart();
+                fetch(new URL('whep', window.location.href) + window.location.search, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/sdp',
+                    },
+                    body: desc.sdp,
+                })
+                    .then((res) => {
+                        if (res.status !== 201) {
+                            throw new Error('bad status code');
+                        }
+                        this.eTag = res.headers.get('E-Tag');
+                        return res.text();
+                    })
+                    .then((sdp) => this.onRemoteDescription(new RTCSessionDescription({
+                        type: 'answer',
+                        sdp,
+                    })))
+                    .catch((err) => {
+                        console.log('error: ' + err);
+                        this.scheduleRestart();
+                    });
             });
     }
 
@@ -182,7 +176,7 @@ class WHEPClient {
         }
     }
 
-	onRemoteAnswer(answer) {
+	onRemoteDescription(answer) {
         if (this.restartTimeout !== null) {
             return;
         }

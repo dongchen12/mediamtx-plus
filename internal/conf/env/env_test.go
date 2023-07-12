@@ -40,22 +40,15 @@ func (d *myDuration) UnmarshalEnv(s string) error {
 	return d.UnmarshalJSON([]byte(`"` + s + `"`))
 }
 
-type mySubStruct struct {
-	URL      string
-	Username string
-	Password string
-}
-
 type testStruct struct {
-	MyString         string
-	MyInt            int
-	MyFloat          float64
-	MyBool           bool
-	MyDuration       myDuration
-	MyMap            map[string]*mapEntry
-	MySlice          []string
-	MySliceEmpty     []string
-	MySliceSubStruct []mySubStruct
+	MyString     string
+	MyInt        int
+	MyFloat      float64
+	MyBool       bool
+	MyDuration   myDuration
+	MyMap        map[string]*mapEntry
+	MySlice      []string
+	MySliceEmpty []string
 }
 
 func TestLoad(t *testing.T) {
@@ -89,21 +82,6 @@ func TestLoad(t *testing.T) {
 	os.Setenv("MYPREFIX_MYSLICEEMPTY", "")
 	defer os.Unsetenv("MYPREFIX_MYSLICEEMPTY")
 
-	os.Setenv("MYPREFIX_MYSLICESUBSTRUCT_0_URL", "url1")
-	defer os.Unsetenv("MYPREFIX_MYSLICESUBSTRUCT_0_URL")
-
-	os.Setenv("MYPREFIX_MYSLICESUBSTRUCT_0_USERNAME", "user1")
-	defer os.Unsetenv("MYPREFIX_MYSLICESUBSTRUCT_0_USERNAME")
-
-	os.Setenv("MYPREFIX_MYSLICESUBSTRUCT_0_PASSWORD", "pass1")
-	defer os.Unsetenv("MYPREFIX_MYSLICESUBSTRUCT_0_PASSWORD")
-
-	os.Setenv("MYPREFIX_MYSLICESUBSTRUCT_1_URL", "url2")
-	defer os.Unsetenv("MYPREFIX_MYSLICESUBSTRUCT_1_URL")
-
-	os.Setenv("MYPREFIX_MYSLICESUBSTRUCT_1_PASSWORD", "pass2")
-	defer os.Unsetenv("MYPREFIX_MYSLICESUBSTRUCT_1_PASSWORD")
-
 	var s testStruct
 	err := Load("MYPREFIX", &s)
 	require.NoError(t, err)
@@ -124,16 +102,4 @@ func TestLoad(t *testing.T) {
 
 	require.Equal(t, []string{"val1", "val2"}, s.MySlice)
 	require.Equal(t, []string{}, s.MySliceEmpty)
-
-	require.Equal(t, []mySubStruct{
-		{
-			URL:      "url1",
-			Username: "user1",
-			Password: "pass1",
-		},
-		{
-			URL:      "url2",
-			Password: "pass2",
-		},
-	}, s.MySliceSubStruct)
 }

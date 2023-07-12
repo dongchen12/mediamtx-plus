@@ -99,6 +99,7 @@ func createRangeHeader(cnf *conf.PathConf) (*headers.Range, error) {
 func (s *rtspSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf chan *conf.PathConf) error {
 	s.Log(logger.Debug, "connecting")
 
+	// 用于加密传输
 	var tlsConfig *tls.Config
 	if cnf.SourceFingerprint != "" {
 		tlsConfig = &tls.Config{
@@ -155,7 +156,7 @@ func (s *rtspSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf cha
 	defer c.Close()
 
 	readErr := make(chan error)
-	go func() {
+	go func() { // 开一个新的go routine
 		readErr <- func() error {
 			medias, baseURL, _, err := c.Describe(u)
 			if err != nil {
@@ -167,7 +168,7 @@ func (s *rtspSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf cha
 				return err
 			}
 
-			res := s.parent.sourceStaticImplSetReady(pathSourceStaticSetReadyReq{
+			res := s.parent.sourceStaticImplSetReady(pathSourceStaticSetReadyReq{ //
 				medias:             medias,
 				generateRTPPackets: false,
 			})
@@ -184,7 +185,7 @@ func (s *rtspSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf cha
 					cmedi := medi
 					cforma := forma
 
-					c.OnPacketRTP(cmedi, cforma, func(pkt *rtp.Packet) {
+					c.OnPacketRTP(cmedi, cforma, func(pkt *rtp.Packet) { // 就是在这里收到包的
 						res.stream.writeRTPPacket(cmedi, cforma, pkt, time.Now())
 					})
 				}

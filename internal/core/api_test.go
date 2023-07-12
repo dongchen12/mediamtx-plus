@@ -17,7 +17,6 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/formats"
 	"github.com/bluenviron/gortsplib/v3/pkg/media"
 	"github.com/bluenviron/mediacommon/pkg/codecs/mpeg4audio"
-	"github.com/google/uuid"
 	"github.com/pion/rtp"
 	"github.com/stretchr/testify/require"
 
@@ -440,7 +439,12 @@ func TestAPIPathsGet(t *testing.T) {
 
 	hc := &http.Client{Transport: &http.Transport{}}
 
-	for _, ca := range []string{"ok", "ok-nested", "not found"} {
+	source := gortsplib.Client{}
+	err := source.StartRecording("rtsp://localhost:8554/mypath", media.Medias{testMediaH264})
+	require.NoError(t, err)
+	defer source.Close()
+
+	for _, ca := range []string{"ok", "not found"} {
 		t.Run(ca, func(t *testing.T) {
 			type pathSource struct {
 				Type string `json:"type"`
@@ -455,26 +459,17 @@ func TestAPIPathsGet(t *testing.T) {
 			}
 
 			var pathName string
-
-			switch ca {
-			case "ok":
+			if ca == "ok" {
 				pathName = "mypath"
-			case "ok-nested":
-				pathName = "my/nested/path"
-			case "not found":
+			} else {
 				pathName = "nonexisting"
 			}
 
-			if ca == "ok" || ca == "ok-nested" {
-				source := gortsplib.Client{}
-				err := source.StartRecording("rtsp://localhost:8554/"+pathName, media.Medias{testMediaH264})
-				require.NoError(t, err)
-				defer source.Close()
-
+			if ca == "ok" {
 				var out path
 				httpRequest(t, hc, http.MethodGet, "http://localhost:9997/v2/paths/get/"+pathName, nil, &out)
 				require.Equal(t, path{
-					Name: pathName,
+					Name: "mypath",
 					Source: pathSource{
 						Type: "rtspSession",
 					},
@@ -689,33 +684,25 @@ func TestAPIProtocolList(t *testing.T) {
 					pa = "rtmpsconns"
 				}
 
-				type item struct {
-					State string `json:"state"`
-					Path  string `json:"path"`
-				}
-
 				var out struct {
-					ItemCount int    `json:"itemCount"`
-					Items     []item `json:"items"`
+					ItemCount int `json:"itemCount"`
+					Items     []struct {
+						State string `json:"state"`
+					} `json:"items"`
 				}
 				httpRequest(t, hc, http.MethodGet, "http://localhost:9997/v2/"+pa+"/list", nil, &out)
 
 				if ca != "rtsp conns" && ca != "rtsps conns" {
-					require.Equal(t, item{
-						State: "publish",
-						Path:  "mypath",
-					}, out.Items[0])
+					require.Equal(t, "publish", out.Items[0].State)
 				}
 
 			case "hls":
-				type item struct {
-					Created     string `json:"created"`
-					LastRequest string `json:"lastRequest"`
-				}
-
 				var out struct {
-					ItemCount int    `json:"itemCount"`
-					Items     []item `json:"items"`
+					ItemCount int `json:"itemCount"`
+					Items     []struct {
+						Created     string `json:"created"`
+						LastRequest string `json:"lastRequest"`
+					} `json:"items"`
 				}
 				httpRequest(t, hc, http.MethodGet, "http://localhost:9997/v2/hlsmuxers/list", nil, &out)
 
@@ -725,9 +712,13 @@ func TestAPIProtocolList(t *testing.T) {
 
 			case "webrtc":
 				type item struct {
-					PeerConnectionEstablished bool   `json:"peerConnectionEstablished"`
-					State                     string `json:"state"`
-					Path                      string `json:"path"`
+					Created                   time.Time `json:"created"`
+					RemoteAddr                string    `json:"remoteAddr"`
+					PeerConnectionEstablished bool      `json:"peerConnectionEstablished"`
+					LocalCandidate            string    `json:"localCandidate"`
+					RemoteCandidate           string    `json:"remoteCandidate"`
+					BytesReceived             uint64    `json:"bytesReceived"`
+					BytesSent                 uint64    `json:"bytesSent"`
 				}
 
 				var out struct {
@@ -736,11 +727,7 @@ func TestAPIProtocolList(t *testing.T) {
 				}
 				httpRequest(t, hc, http.MethodGet, "http://localhost:9997/v2/webrtcsessions/list", nil, &out)
 
-				require.Equal(t, item{
-					PeerConnectionEstablished: true,
-					State:                     "read",
-					Path:                      "mypath",
-				}, out.Items[0])
+				require.Equal(t, true, out.Items[0].PeerConnectionEstablished)
 			}
 		})
 	}
@@ -1004,90 +991,6 @@ func TestAPIProtocolGet(t *testing.T) {
 	}
 }
 
-func TestAPIProtocolGetNotFound(t *testing.T) {
-	serverCertFpath, err := writeTempFile(serverCert)
-	require.NoError(t, err)
-	defer os.Remove(serverCertFpath)
-
-	serverKeyFpath, err := writeTempFile(serverKey)
-	require.NoError(t, err)
-	defer os.Remove(serverKeyFpath)
-
-	for _, ca := range []string{
-		"rtsp conns",
-		"rtsp sessions",
-		"rtsps conns",
-		"rtsps sessions",
-		"rtmp",
-		"rtmps",
-		"hls",
-		"webrtc",
-	} {
-		t.Run(ca, func(t *testing.T) {
-			conf := "api: yes\n"
-
-			switch ca {
-			case "rtsps conns", "rtsps sessions":
-				conf += "protocols: [tcp]\n" +
-					"encryption: strict\n" +
-					"serverCert: " + serverCertFpath + "\n" +
-					"serverKey: " + serverKeyFpath + "\n"
-
-			case "rtmps":
-				conf += "rtmpEncryption: strict\n" +
-					"rtmpServerCert: " + serverCertFpath + "\n" +
-					"rtmpServerKey: " + serverKeyFpath + "\n"
-			}
-
-			conf += "paths:\n" +
-				"  all:\n"
-
-			p, ok := newInstance(conf)
-			require.Equal(t, true, ok)
-			defer p.Close()
-
-			hc := &http.Client{Transport: &http.Transport{}}
-
-			var pa string
-			switch ca {
-			case "rtsp conns":
-				pa = "rtspconns"
-
-			case "rtsp sessions":
-				pa = "rtspsessions"
-
-			case "rtsps conns":
-				pa = "rtspsconns"
-
-			case "rtsps sessions":
-				pa = "rtspssessions"
-
-			case "rtmp":
-				pa = "rtmpconns"
-
-			case "rtmps":
-				pa = "rtmpsconns"
-
-			case "hls":
-				pa = "hlsmuxers"
-
-			case "webrtc":
-				pa = "webrtcsessions"
-			}
-
-			func() {
-				req, err := http.NewRequest("GET", "http://localhost:9997/v2/"+pa+"/get/"+uuid.New().String(), nil)
-				require.NoError(t, err)
-
-				res, err := hc.Do(req)
-				require.NoError(t, err)
-				defer res.Body.Close()
-				require.Equal(t, http.StatusNotFound, res.StatusCode)
-			}()
-		})
-	}
-}
-
 func TestAPIProtocolKick(t *testing.T) {
 	serverCertFpath, err := writeTempFile(serverCert)
 	require.NoError(t, err)
@@ -1194,68 +1097,6 @@ func TestAPIProtocolKick(t *testing.T) {
 			}
 			httpRequest(t, hc, http.MethodGet, "http://localhost:9997/v2/"+pa+"/list", nil, &out2)
 			require.Equal(t, 0, len(out2.Items))
-		})
-	}
-}
-
-func TestAPIProtocolKickNotFound(t *testing.T) {
-	serverCertFpath, err := writeTempFile(serverCert)
-	require.NoError(t, err)
-	defer os.Remove(serverCertFpath)
-
-	serverKeyFpath, err := writeTempFile(serverKey)
-	require.NoError(t, err)
-	defer os.Remove(serverKeyFpath)
-
-	for _, ca := range []string{
-		"rtsp",
-		"rtsps",
-		"rtmp",
-		"webrtc",
-	} {
-		t.Run(ca, func(t *testing.T) {
-			conf := "api: yes\n"
-
-			if ca == "rtsps" {
-				conf += "protocols: [tcp]\n" +
-					"encryption: strict\n" +
-					"serverCert: " + serverCertFpath + "\n" +
-					"serverKey: " + serverKeyFpath + "\n"
-			}
-
-			conf += "paths:\n" +
-				"  all:\n"
-
-			p, ok := newInstance(conf)
-			require.Equal(t, true, ok)
-			defer p.Close()
-
-			hc := &http.Client{Transport: &http.Transport{}}
-
-			var pa string
-			switch ca {
-			case "rtsp":
-				pa = "rtspsessions"
-
-			case "rtsps":
-				pa = "rtspssessions"
-
-			case "rtmp":
-				pa = "rtmpconns"
-
-			case "webrtc":
-				pa = "webrtcsessions"
-			}
-
-			func() {
-				req, err := http.NewRequest("GET", "http://localhost:9997/v2/"+pa+"/kick/"+uuid.New().String(), nil)
-				require.NoError(t, err)
-
-				res, err := hc.Do(req)
-				require.NoError(t, err)
-				defer res.Body.Close()
-				require.Equal(t, http.StatusNotFound, res.StatusCode)
-			}()
 		})
 	}
 }

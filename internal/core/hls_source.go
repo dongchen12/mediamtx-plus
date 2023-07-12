@@ -42,7 +42,7 @@ func (s *hlsSource) Log(level logger.Level, format string, args ...interface{}) 
 	s.parent.Log(level, "[hls source] "+format, args...)
 }
 
-// run implements sourceStaticImpl.
+// run implements sourceStaticImpl. 设置了很多回调函数啥的.
 func (s *hlsSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf chan *conf.PathConf) error {
 	var stream *stream
 
@@ -52,6 +52,7 @@ func (s *hlsSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf chan
 		}
 	}()
 
+	// 这部分是加密传输的配置, flv部分不需要
 	var tlsConfig *tls.Config
 	if cnf.SourceFingerprint != "" {
 		tlsConfig = &tls.Config{
@@ -72,6 +73,7 @@ func (s *hlsSource) run(ctx context.Context, cnf *conf.PathConf, reloadConf chan
 		}
 	}
 
+	//
 	c := &gohlslib.Client{
 		URI: cnf.Source,
 		HTTPClient: &http.Client{

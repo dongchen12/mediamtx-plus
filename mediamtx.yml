@@ -38,7 +38,7 @@ udpMaxPayloadSize: 1472
 externalAuthenticationURL:
 
 # Enable the HTTP API.
-api: no
+api: yes
 # Address of the API listener.
 apiAddress: 127.0.0.1:9997
 
@@ -81,15 +81,15 @@ rtspAddress: :8554
 # Address of the TCP/TLS/RTSPS listener. This is needed only when encryption is "strict" or "optional".
 rtspsAddress: :8322
 # Address of the UDP/RTP listener. This is needed only when "udp" is in protocols.
-rtpAddress: :8000
+rtpAddress: :8400
 # Address of the UDP/RTCP listener. This is needed only when "udp" is in protocols.
-rtcpAddress: :8001
+rtcpAddress: :8401
 # IP range of all UDP-multicast listeners. This is needed only when "multicast" is in protocols.
 multicastIPRange: 224.1.0.0/16
 # Port of all UDP-multicast/RTP listeners. This is needed only when "multicast" is in protocols.
-multicastRTPPort: 8002
+multicastRTPPort: 8402
 # Port of all UDP-multicast/RTCP listeners. This is needed only when "multicast" is in protocols.
-multicastRTCPPort: 8003
+multicastRTCPPort: 8403
 # Path to the server key. This is needed only when encryption is "strict" or "optional".
 # This can be generated with:
 # openssl genrsa -out server.key 2048
@@ -140,7 +140,7 @@ hlsServerKey: server.key
 hlsServerCert: server.crt
 # By default, HLS is generated only when requested by a user.
 # This option allows to generate it always, avoiding the delay between request and generation.
-hlsAlwaysRemux: no
+hlsAlwaysRemux: yes
 # Variant of the HLS protocol to use. Available options are:
 # * mpegts - uses MPEG-TS segments, for maximum compatibility.
 # * fmp4 - uses fragmented MP4 segments, more efficient.
@@ -200,18 +200,15 @@ webrtcAllowOrigin: '*'
 # If the server receives a request from one of these entries, IP in logs
 # will be taken from the X-Forwarded-For header.
 webrtcTrustedProxies: []
-# List of ICE servers.
-webrtcICEServers2:
-  # URL can point to a STUN, TURN or TURNS server.
-  # STUN servers are used to obtain the public IP of server and clients. They are
-  # needed when server and clients are on different LANs.
-  # TURN/TURNS servers are needed when a direct connection between server and
-  # clients is not possible. All traffic is routed through them.
-- url: stun:stun.l.google.com:19302
-  # if user is "AUTH_SECRET", then authentication is secret based.
-  # the secret must be inserted into the password field.
-  username: ''
-  password: ''
+# List of ICE servers, in format type:user:password:host:port or type:host:port.
+# type can be "stun", "turn" or "turns".
+# STUN servers are used to obtain the public IP of server and clients. They are
+# needed when server and clients are on different LANs.
+# TURN servers are needed when a direct connection between server and clients
+# is not possible. All traffic is routed through the chosen TURN server.
+# if user is "AUTH_SECRET", then authentication is secret based.
+# the secret must be inserted into the password field.
+webrtcICEServers: [stun:stun.l.google.com:19302]
 # List of public IP addresses that are to be used as a host.
 # This is used typically for servers that are behind 1:1 D-NAT.
 webrtcICEHostNAT1To1IPs: []
@@ -236,6 +233,12 @@ webrtcICETCPMuxAddress:
 # The settings under the path "all" are applied to all paths that do not match
 # another entry.
 paths:
+  test:
+    source: rtsp://localhost:8550/livestream
+    sourceProtocol: tcp
+    sourceAnyPortEnable: no
+
+
   all:
     # Source of the stream. This can be:
     # * publisher -> the stream is published by a RTSP or RTMP client

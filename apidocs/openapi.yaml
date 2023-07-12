@@ -149,17 +149,10 @@ components:
           type: array
           items:
             type: string
-        webrtcICEServers2:
+        webrtcICEServers:
           type: array
           items:
-            type: object
-            properties:
-              url:
-                type: string
-              username:
-                type: string
-              password:
-                type: string
+            type: string
         webrtcICEHostNAT1To1IPs:
           type: array
           items:
@@ -349,7 +342,7 @@ components:
           - hlsMuxer
           - hlsSource
           - rpiCameraSource
-          - rtmpConn
+          - rtmpSession
           - rtmpSource
           - rtmpsSession
           - rtspSession
@@ -389,8 +382,6 @@ components:
         state:
           type: string
           enum: [idle, read, publish]
-        path:
-          type: string
         bytesReceived:
           type: integer
           format: int64
@@ -410,8 +401,6 @@ components:
         state:
           type: string
           enum: [idle, read, publish]
-        path:
-          type: string
         bytesReceived:
           type: integer
           format: int64
@@ -500,8 +489,6 @@ components:
         state:
           type: string
           enum: [read, publish]
-        path:
-          type: string
         bytesReceived:
           type: integer
           format: int64
@@ -679,8 +666,6 @@ paths:
                 $ref: '#/components/schemas/HLSMuxer'
         '400':
           description: invalid request.
-        '404':
-          description: muxer not found.
         '500':
           description: internal server error.
 
@@ -735,8 +720,6 @@ paths:
                 $ref: '#/components/schemas/Path'
         '400':
           description: invalid request.
-        '404':
-          description: path not found.
         '500':
           description: internal server error.
 
@@ -791,8 +774,6 @@ paths:
                 $ref: '#/components/schemas/RTSPConn'
         '400':
           description: invalid request.
-        '404':
-          description: connection not found.
         '500':
           description: internal server error.
 
@@ -847,8 +828,6 @@ paths:
                 $ref: '#/components/schemas/RTSPSession'
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -869,8 +848,6 @@ paths:
           description: the request was successful.
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -925,8 +902,6 @@ paths:
                 $ref: '#/components/schemas/RTSPConn'
         '400':
           description: invalid request.
-        '404':
-          description: connection not found.
         '500':
           description: internal server error.
 
@@ -957,8 +932,6 @@ paths:
                 $ref: '#/components/schemas/RTSPSessionsList'
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -983,8 +956,6 @@ paths:
                 $ref: '#/components/schemas/RTSPSession'
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -1005,8 +976,6 @@ paths:
           description: the request was successful.
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -1061,8 +1030,6 @@ paths:
                 $ref: '#/components/schemas/RTMPConn'
         '400':
           description: invalid request.
-        '404':
-          description: connection not found.
         '500':
           description: internal server error.
 
@@ -1083,8 +1050,6 @@ paths:
           description: the request was successful.
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -1139,8 +1104,6 @@ paths:
                 $ref: '#/components/schemas/RTMPConn'
         '400':
           description: invalid request.
-        '404':
-          description: connection not found.
         '500':
           description: internal server error.
 
@@ -1161,8 +1124,6 @@ paths:
           description: the request was successful.
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -1217,8 +1178,6 @@ paths:
                 $ref: '#/components/schemas/WebRTCSession'
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.
 
@@ -1239,7 +1198,5 @@ paths:
           description: the request was successful.
         '400':
           description: invalid request.
-        '404':
-          description: session not found.
         '500':
           description: internal server error.

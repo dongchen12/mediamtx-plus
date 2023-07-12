@@ -43,6 +43,7 @@ type Core struct {
 	rtspsServer     *rtspServer
 	rtmpServer      *rtmpServer
 	rtmpsServer     *rtmpServer
+	httpflvServer   *flvManager
 	hlsManager      *hlsManager
 	webRTCManager   *webRTCManager
 	api             *api
@@ -132,6 +133,7 @@ func (p *Core) Log(level logger.Level, format string, args ...interface{}) {
 func (p *Core) run() {
 	defer close(p.done)
 
+	// 支持配置热加载
 	confChanged := func() chan struct{} {
 		if p.confWatcher != nil {
 			return p.confWatcher.Watch()
@@ -139,13 +141,14 @@ func (p *Core) run() {
 		return make(chan struct{})
 	}()
 
+	// 用来处理系统interrupt信号
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
 outer:
 	for {
 		select {
-		case <-confChanged:
+		case <-confChanged: // 检测到配置更改
 			p.Log(logger.Info, "reloading configuration (file changed)")
 
 			newConf, _, err := conf.Load(p.confPath)
@@ -186,6 +189,7 @@ outer:
 func (p *Core) createResources(initial bool) error {
 	var err error
 
+	// 在core中创建一个新的logger, 用于全局的日志输出
 	if p.logger == nil {
 		p.logger, err = logger.New(
 			logger.Level(p.conf.LogLevel),
@@ -256,6 +260,10 @@ func (p *Core) createResources(initial bool) error {
 		)
 	}
 
+	// 这里是正经的创建资源的地方了!
+	// TODO: 当务之急是弄清楚RTSP获取到的包怎么在服务器内部传递并进行协议转换
+
+	// 创建RTSP服务器
 	if !p.conf.RTSPDisable &&
 		(p.conf.Encryption == conf.EncryptionNo ||
 			p.conf.Encryption == conf.EncryptionOptional) {
@@ -330,6 +338,28 @@ func (p *Core) createResources(initial bool) error {
 		}
 	}
 
+	//if !p.conf.HttpflvDisable {
+	//	if p.httpflvServer == nil {
+	//		p.httpflvServer, err = newFlvManager(
+	//			p.ctx,
+	//			p.conf.HLSAddress,
+	//			p.conf.HLSEncryption,
+	//			p.conf.HLSServerKey,
+	//			p.conf.HLSServerCert,
+	//			p.conf.HLSAllowOrigin,
+	//			p.conf.HLSTrustedProxies,
+	//			p.conf.ReadTimeout,
+	//			p.conf.WriteTimeout,
+	//			p.conf.ReadBufferCount,
+	//			p.pathManager,
+	//			p,
+	//		)
+	//		if err != nil {
+	//			return err
+	//		}
+	//	}
+	//}
+
 	if !p.conf.RTMPDisable &&
 		(p.conf.RTMPEncryption == conf.EncryptionNo ||
 			p.conf.RTMPEncryption == conf.EncryptionOptional) {
@@ -384,6 +414,25 @@ func (p *Core) createResources(initial bool) error {
 		}
 	}
 
+	p.httpflvServer, err = newFlvManager(
+		p.ctx,
+		":8999",
+		false,
+		"",
+		"",
+		"*",
+		p.conf.HLSTrustedProxies,
+		p.conf.ReadTimeout,
+		p.conf.WriteTimeout,
+		p.conf.ReadBufferCount,
+		p.pathManager,
+		p,
+	)
+	if err != nil {
+		p.Log(logger.Error, "failed to open flv server")
+	}
+
+	// 这里可以尝试一下降低延迟, 当然是能正常播放的前提之下, vlC就算了, 辣鸡
 	if !p.conf.HLSDisable {
 		if p.hlsManager == nil {
 			p.hlsManager, err = newHLSManager(
@@ -424,7 +473,7 @@ func (p *Core) createResources(initial bool) error {
 				p.conf.WebRTCServerCert,
 				p.conf.WebRTCAllowOrigin,
 				p.conf.WebRTCTrustedProxies,
-				p.conf.WebRTCICEServers2,
+				p.conf.WebRTCICEServers,
 				p.conf.ReadTimeout,
 				p.conf.ReadBufferCount,
 				p.pathManager,
@@ -594,7 +643,7 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		newConf.WebRTCServerCert != p.conf.WebRTCServerCert ||
 		newConf.WebRTCAllowOrigin != p.conf.WebRTCAllowOrigin ||
 		!reflect.DeepEqual(newConf.WebRTCTrustedProxies, p.conf.WebRTCTrustedProxies) ||
-		!reflect.DeepEqual(newConf.WebRTCICEServers2, p.conf.WebRTCICEServers2) ||
+		!reflect.DeepEqual(newConf.WebRTCICEServers, p.conf.WebRTCICEServers) ||
 		newConf.ReadTimeout != p.conf.ReadTimeout ||
 		newConf.ReadBufferCount != p.conf.ReadBufferCount ||
 		closeMetrics ||

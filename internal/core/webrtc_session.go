@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,9 +14,17 @@ import (
 	"github.com/bluenviron/gortsplib/v3/pkg/ringbuffer"
 	"github.com/google/uuid"
 	"github.com/pion/ice/v2"
+	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v3"
 
 	"github.com/bluenviron/mediamtx/internal/logger"
+)
+
+const (
+	webrtcHandshakeTimeout   = 10 * time.Second
+	webrtcTrackGatherTimeout = 2 * time.Second
+	webrtcPayloadMaxSize     = 1188 // 1200 - 12 (RTP header)
+	webrtcStreamID           = "mediamtx"
 )
 
 type trackRecvPair struct {
@@ -37,6 +46,30 @@ func mediasOfIncomingTracks(tracks []*webRTCIncomingTrack) media.Medias {
 		ret[i] = track.media
 	}
 	return ret
+}
+
+func insertTias(offer *webrtc.SessionDescription, value uint64) {
+	var sd sdp.SessionDescription
+	err := sd.Unmarshal([]byte(offer.SDP))
+	if err != nil {
+		return
+	}
+
+	for _, media := range sd.MediaDescriptions {
+		if media.MediaName.Media == "video" {
+			media.Bandwidth = []sdp.Bandwidth{{
+				Type:      "TIAS",
+				Bandwidth: value,
+			}}
+		}
+	}
+
+	enc, err := sd.Marshal()
+	if err != nil {
+		return
+	}
+
+	offer.SDP = string(enc)
 }
 
 func gatherOutgoingTracks(medias media.Medias) ([]*webRTCOutgoingTrack, error) {
@@ -81,9 +114,6 @@ func gatherIncomingTracks(
 	for {
 		select {
 		case <-t.C:
-			if len(tracks) == 0 {
-				return nil, fmt.Errorf("no tracks found")
-			}
 			return tracks, nil
 
 		case pair := <-trackRecv:
@@ -126,9 +156,9 @@ type webRTCSession struct {
 	created    time.Time
 	uuid       uuid.UUID
 	secret     uuid.UUID
-	answerSent bool
-	mutex      sync.RWMutex
+	pcMutex    sync.RWMutex
 	pc         *peerConnection
+	answerSent bool
 
 	chAddRemoteCandidates chan webRTCSessionAddCandidatesReq
 }
@@ -180,6 +210,12 @@ func (s *webRTCSession) close() {
 	s.ctxCancel()
 }
 
+func (s *webRTCSession) safePC() *peerConnection {
+	s.pcMutex.RLock()
+	defer s.pcMutex.RUnlock()
+	return s.pc
+}
+
 func (s *webRTCSession) run() {
 	defer s.wg.Done()
 
@@ -222,7 +258,9 @@ func (s *webRTCSession) runPublish() (int, error) {
 	defer res.path.publisherRemove(pathPublisherRemoveReq{author: s})
 
 	pc, err := newPeerConnection(
-		s.parent.generateICEServers(),
+		s.req.videoCodec,
+		s.req.audioCodec,
+		s.parent.genICEServers(),
 		s.iceHostNAT1To1IPs,
 		s.iceUDPMux,
 		s.iceTCPMux,
@@ -278,6 +316,15 @@ func (s *webRTCSession) runPublish() (int, error) {
 
 	tmp := pc.LocalDescription()
 	answer = *tmp
+
+	if s.req.videoBitrate != "" {
+		tmp, err := strconv.ParseUint(s.req.videoBitrate, 10, 31)
+		if err != nil {
+			return http.StatusBadRequest, err
+		}
+
+		insertTias(&answer, tmp*1024)
+	}
 
 	err = s.writeAnswer(&answer)
 	if err != nil {
@@ -344,7 +391,9 @@ func (s *webRTCSession) runRead() (int, error) {
 	}
 
 	pc, err := newPeerConnection(
-		s.parent.generateICEServers(),
+		"",
+		"",
+		s.parent.genICEServers(),
 		s.iceHostNAT1To1IPs,
 		s.iceUDPMux,
 		s.iceTCPMux,
@@ -485,9 +534,9 @@ outer:
 		}
 	}
 
-	s.mutex.Lock()
+	s.pcMutex.Lock()
 	s.pc = pc
-	s.mutex.Unlock()
+	s.pcMutex.Unlock()
 
 	return nil
 }
@@ -536,21 +585,19 @@ func (s *webRTCSession) apiReaderDescribe() pathAPISourceOrReader {
 }
 
 func (s *webRTCSession) apiItem() *apiWebRTCSession {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
 	peerConnectionEstablished := false
 	localCandidate := ""
 	remoteCandidate := ""
 	bytesReceived := uint64(0)
 	bytesSent := uint64(0)
 
-	if s.pc != nil {
+	pc := s.safePC()
+	if pc != nil {
 		peerConnectionEstablished = true
-		localCandidate = s.pc.localCandidate()
-		remoteCandidate = s.pc.remoteCandidate()
-		bytesReceived = s.pc.bytesReceived()
-		bytesSent = s.pc.bytesSent()
+		localCandidate = pc.localCandidate()
+		remoteCandidate = pc.remoteCandidate()
+		bytesReceived = pc.bytesReceived()
+		bytesSent = pc.bytesSent()
 	}
 
 	return &apiWebRTCSession{
@@ -566,7 +613,6 @@ func (s *webRTCSession) apiItem() *apiWebRTCSession {
 			}
 			return "read"
 		}(),
-		Path:          s.req.pathName,
 		BytesReceived: bytesReceived,
 		BytesSent:     bytesSent,
 	}

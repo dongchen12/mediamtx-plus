@@ -35,6 +35,11 @@ type pathManagerHLSManager interface {
 	pathSourceNotReady(*path)
 }
 
+type pathManagerFlvManager interface {
+	pathSourceReady(*path)
+	pathSourceNotReady(*path)
+}
+
 type pathManagerParent interface {
 	logger.Writer
 }
@@ -56,6 +61,7 @@ type pathManager struct {
 	ctxCancel   func()
 	wg          sync.WaitGroup
 	hlsManager  pathManagerHLSManager
+	flvManager  pathManagerFlvManager
 	paths       map[string]*path
 	pathsByConf map[string]map[*path]struct{}
 
@@ -69,6 +75,7 @@ type pathManager struct {
 	chReaderAdd          chan pathReaderAddReq
 	chPublisherAdd       chan pathPublisherAddReq
 	chHLSManagerSet      chan pathManagerHLSManager
+	chFlvManagerSet      chan pathManagerFlvManager
 	chAPIPathsList       chan pathAPIPathsListReq
 	chAPIPathsGet        chan pathAPIPathsGetReq
 }
@@ -114,6 +121,7 @@ func newPathManager(
 		chReaderAdd:               make(chan pathReaderAddReq),
 		chPublisherAdd:            make(chan pathPublisherAddReq),
 		chHLSManagerSet:           make(chan pathManagerHLSManager),
+		chFlvManagerSet:           make(chan pathManagerFlvManager),
 		chAPIPathsList:            make(chan pathAPIPathsListReq),
 		chAPIPathsGet:             make(chan pathAPIPathsGetReq),
 	}
@@ -288,6 +296,9 @@ outer:
 		case s := <-pm.chHLSManagerSet:
 			pm.hlsManager = s
 
+		case s := <-pm.chFlvManagerSet:
+			pm.flvManager = s
+
 		case req := <-pm.chAPIPathsList:
 			paths := make(map[string]*path)
 
@@ -300,7 +311,7 @@ outer:
 		case req := <-pm.chAPIPathsGet:
 			path, ok := pm.paths[req.name]
 			if !ok {
-				req.res <- pathAPIPathsGetRes{err: errAPINotFound}
+				req.res <- pathAPIPathsGetRes{err: fmt.Errorf("not found")}
 				continue
 			}
 
@@ -487,6 +498,14 @@ func (pm *pathManager) readerAdd(req pathReaderAddReq) pathReaderSetupPlayRes {
 func (pm *pathManager) hlsManagerSet(s pathManagerHLSManager) {
 	select {
 	case pm.chHLSManagerSet <- s:
+	case <-pm.ctx.Done():
+	}
+}
+
+// flvManagerSet 用于通知pathManager, flvManager已经就绪
+func (pm *pathManager) flvManagerSet(s pathManagerFlvManager) {
+	select {
+	case pm.chFlvManagerSet <- s:
 	case <-pm.ctx.Done():
 	}
 }
