@@ -11,6 +11,18 @@ type flvManagerParent interface {
 	logger.Writer
 }
 
+type flvManagerAPIMuxersListRes struct {
+}
+
+type flvManagerAPIMuxersListReq struct {
+}
+
+type flvManagerAPIMuxersGetRes struct {
+}
+
+type flvManagerAPIMuxersGetReq struct {
+}
+
 // 需要将flv格式的视频流数据按照一定的分片大小或时间间隔进行传输, 客户端通过解析响应体中的FLV Tag, 逐步获取并播放视频数据.
 type flvManager struct {
 	segmentCount    int
@@ -33,8 +45,8 @@ type flvManager struct {
 	chPathSourceNotReady chan *path
 	chHandleRequest      chan flvMuxerHandleRequestReq
 	chMuxerClose         chan *flvMuxer
-	//chAPIMuxerList       chan flvManagerAPIMuxersListReq
-	//chAPIMuxerGet        chan flvManagerAPIMuxersGetReq
+	chAPIMuxerList       chan flvManagerAPIMuxersListReq
+	chAPIMuxerGet        chan flvManagerAPIMuxersGetReq
 }
 
 func newFlvManager(
@@ -58,9 +70,10 @@ func newFlvManager(
 	defer ctxCancel()
 
 	m := &flvManager{
-		ctx:         ctx,
-		parent:      parent,
-		pathManager: pathManager,
+		ctx:             ctx,
+		parent:          parent,
+		pathManager:     pathManager,
+		readBufferCount: readBufferCount,
 	}
 
 	var err error

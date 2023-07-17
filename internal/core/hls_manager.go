@@ -33,7 +33,6 @@ type hlsManagerParent interface {
 	logger.Writer
 }
 
-// 他这个hls服务器是onDemand的, 也就是说只有当有用户在拉流的时候才开启这个服务器.
 type hlsManager struct {
 	externalAuthenticationURL string
 	alwaysRemux               bool
