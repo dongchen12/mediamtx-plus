@@ -59,7 +59,7 @@ type Core struct {
 // New allocates a core.
 func New(args []string) (*Core, bool) {
 	parser, err := kong.New(&cli,
-		kong.Description("MediaMTX "+version),
+		kong.Description("MediaMTX-plus "+version),
 		kong.UsageOnError(),
 		kong.ValueFormatter(func(value *kong.Value) string {
 			switch value.Name {
@@ -423,7 +423,6 @@ func (p *Core) createResources(initial bool) error {
 		"*",
 		p.conf.HLSTrustedProxies,
 		p.conf.ReadTimeout,
-		p.conf.WriteTimeout,
 		p.conf.ReadBufferCount,
 		p.pathManager,
 		p,

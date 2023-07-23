@@ -3,7 +3,6 @@ package core
 import (
 	_ "embed"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	gopath "path"
@@ -185,10 +184,8 @@ func (s *hlsHTTPServer) onRequest(ctx *gin.Context) {
 		ctx.Writer.Header().Set("Content-Type", "text/html")
 		ctx.Writer.WriteHeader(http.StatusOK)
 		ctx.Writer.Write(hlsIndex)
-		log.Println("HlsIndex:", hlsIndex)
 
 	default:
-		//log.Println("Reached fname default.")
 		s.parent.handleRequest(hlsMuxerHandleRequestReq{ // 发送一个hls处理请求
 			path: dir,
 			file: fname,

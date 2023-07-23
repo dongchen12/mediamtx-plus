@@ -32,6 +32,13 @@ type apiHLSMuxer struct {
 	BytesSent   uint64    `json:"bytesSent"`
 }
 
+type apiFlvMuxer struct {
+	Path        string    `json:"path"`
+	Created     time.Time `json:"created"`
+	LastRequest time.Time `json:"lastRequest"`
+	BytesSent   uint64    `json:"bytesSent"`
+}
+
 type apiHLSMuxersList struct {
 	ItemCount int            `json:"itemCount"`
 	PageCount int            `json:"pageCount"`

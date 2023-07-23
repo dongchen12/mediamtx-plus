@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/logger"
+	"net/http"
 	"sync"
 )
 
@@ -11,6 +12,7 @@ type flvManagerParent interface {
 	logger.Writer
 }
 
+// 这些结构体都是用来在子服务器之间传递请求的, 做API查看服务器状态的时候可以用一下
 type flvManagerAPIMuxersListRes struct {
 }
 
@@ -30,7 +32,6 @@ type flvManager struct {
 	partDuration    conf.StringDuration
 	segmentMaxSize  conf.StringSize
 	pathManager     *pathManager
-	directory       string
 	readBufferCount int
 	parent          flvManagerParent
 
@@ -58,7 +59,6 @@ func newFlvManager(
 	allowOrigin string,
 	trustedProxies conf.IPsOrCIDRs,
 	readTimeout conf.StringDuration,
-	writeTimeout conf.StringDuration,
 	readBufferCount int,
 	pathManager *pathManager,
 	parent hlsManagerParent,
@@ -66,14 +66,20 @@ func newFlvManager(
 	// 创建子context
 	ctx, ctxCancel := context.WithCancel(parentCtx)
 
-	// TODO 实现run之后把这个删掉!
-	defer ctxCancel()
-
 	m := &flvManager{
 		ctx:             ctx,
+		ctxCancel:       ctxCancel,
 		parent:          parent,
 		pathManager:     pathManager,
 		readBufferCount: readBufferCount,
+		muxers:          make(map[string]*flvMuxer),
+
+		chPathSourceReady:    make(chan *path),
+		chPathSourceNotReady: make(chan *path),
+		chHandleRequest:      make(chan flvMuxerHandleRequestReq),
+		chMuxerClose:         make(chan *flvMuxer),
+		chAPIMuxerGet:        make(chan flvManagerAPIMuxersGetReq),
+		chAPIMuxerList:       make(chan flvManagerAPIMuxersListReq),
 	}
 
 	var err error
@@ -95,17 +101,60 @@ func newFlvManager(
 
 	m.pathManager.flvManagerSet(m)
 
-	// metrics暂时先不管了
-
 	m.wg.Add(1)
 
-	//go m.run()
+	go m.run()
 
 	return m, nil
 }
 
 func (m *flvManager) run() {
+	defer m.wg.Done()
 
+outerlabel:
+	for {
+		select {
+		case pa := <-m.chPathSourceReady:
+			m.Log(logger.Info, "in flv manager path source ready: %s", pa.name)
+			if _, ok := m.muxers[pa.name]; !ok {
+				m.createMuxer(pa.name, "")
+			}
+
+		case <-m.ctx.Done():
+			m.Log(logger.Info, "listener is closing")
+			return
+
+		case req := <-m.chHandleRequest: // 处理
+			m.Log(logger.Info, "received ch signal from flv manager handle request, sname: ", req.sname)
+			if muxer, ok := m.muxers[req.sname]; ok {
+				m.Log(logger.Info, "flv muxer: "+req.sname+" ready, processing request...")
+				muxer.processRequest(&req)
+			} else {
+				m.Log(logger.Info, "flv muxer not found, sname: "+req.sname+", create new one")
+				muxer := m.createMuxer(req.sname, req.ctx.ClientIP()) // 为请求用户创建一个新的Muxer
+				muxer.processRequest(&req)
+			}
+
+		case muxer := <-m.chMuxerClose:
+			muxer.close()
+
+		case <-m.chAPIMuxerList:
+			break outerlabel
+		}
+	}
+
+	m.ctxCancel()
+
+	m.httpServer.close()
+
+	m.pathManager.flvManagerSet(nil)
+}
+
+// 创建一个新的Muxer
+func (m *flvManager) createMuxer(pathName string, remoteAddr string) *flvMuxer {
+	muxer := newFlvMuxer(m.ctx, remoteAddr, m.segmentCount, m.readBufferCount, &m.wg, pathName, m.pathManager, m)
+	m.muxers[pathName] = muxer
+	return muxer
 }
 
 // Log is the main logging function.
@@ -119,15 +168,24 @@ func (m *flvManager) close() {
 	m.wg.Wait()
 }
 
+func (m *flvManager) muxerClose(muxer *flvMuxer) {
+	select {
+	case m.chMuxerClose <- muxer:
+	case <-m.ctx.Done():
+	}
+}
+
+// 处理来自flvHttpServer的请求, 负责找muxer处理请求
 func (m *flvManager) handleRequest(req flvMuxerHandleRequestReq) {
 	req.res = make(chan *flvMuxer)
 
 	select {
-	case m.chHandleRequest <- req: // 把需要处理的请求放进这个chan中
-		muxer := <-req.res // 处理的结果会放在这个chan中
+	case m.chHandleRequest <- req: // 需要处理的请求
+		muxer := <-req.res // 收到对应的muxer会放在这个chan中
 		if muxer != nil {
-			req.ctx.Request.URL.Path = req.file
 			muxer.handleRequest(req.ctx)
+		} else {
+			req.ctx.AbortWithStatus(http.StatusNotFound)
 		}
 
 	case <-m.ctx.Done():

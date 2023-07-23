@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -106,9 +105,9 @@ func newHLSMuxer(
 	// 在当前父context下创建一个子context
 	ctx, ctxCancel := context.WithCancel(parentCtx)
 
-	// 这个muxer相当于另一个服务器
-	log.Println("Creating hls muxer on remoteAddr: ", remoteAddr, ", segmentCount: ", segmentCount, ", segmentDuration: ", segmentDuration, ", "+
-		"")
+	//// 这个muxer相当于另一个服务器
+	//log.Println("Creating hls muxer on remoteAddr: ", remoteAddr, ", segmentCount: ", segmentCount, ", segmentDuration: ", segmentDuration, ", "+
+	//	"")
 	m := &hlsMuxer{
 		remoteAddr:                remoteAddr,
 		externalAuthenticationURL: externalAuthenticationURL,

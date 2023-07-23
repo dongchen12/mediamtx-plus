@@ -207,6 +207,9 @@ outer:
 			if pm.hlsManager != nil {
 				pm.hlsManager.pathSourceReady(pa)
 			}
+			if pm.flvManager != nil {
+				pm.flvManager.pathSourceReady(pa)
+			}
 
 		case pa := <-pm.chPathSourceNotReady:
 			if pm.hlsManager != nil {
@@ -486,7 +489,6 @@ func (pm *pathManager) readerAdd(req pathReaderAddReq) pathReaderSetupPlayRes {
 		if res.err != nil {
 			return res
 		}
-
 		return res.path.readerAdd(req)
 
 	case <-pm.ctx.Done():

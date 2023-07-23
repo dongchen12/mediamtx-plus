@@ -1,11 +1,17 @@
 package core
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/gin-gonic/gin"
+	"log"
+	"net"
 	"net/http"
+	"strings"
+	"time"
 )
 
 // 现在只能是照猫画虎了.
@@ -20,7 +26,65 @@ type flvHTTPServer struct {
 	parent      flvHTTPServerParent
 	allowOrigin string
 
-	inner *httpServer
+	innerMonitor *contextMonitor
+	inner        *httpServer
+}
+
+func newInnerHttpServer(
+	address string,
+	serverCert string,
+	serverKey string,
+	handler http.Handler,
+) (*httpServer, error) {
+	ln, err := net.Listen(restrictNetwork("tcp", address))
+	if err != nil {
+		return nil, err
+	}
+	//
+	//test_router := gin.Default()
+	//test_router.GET("/:sname/video.flv", func(context *gin.Context) {
+	//	sname := context.Param("sname")
+	//	log.Default().Println("sname: " + sname)
+	//	for i := 0; i < 5; i++ {
+	//		_, err := context.Writer.WriteString("hello world")
+	//		if err != nil {
+	//			log.Default().Println("failed to write string")
+	//			return
+	//		}
+	//	}
+	//})
+	//test_router.Run(":9988")
+
+	var tlsConfig *tls.Config
+	if serverCert != "" {
+		crt, err := tls.LoadX509KeyPair(serverCert, serverKey)
+		if err != nil {
+			ln.Close()
+			return nil, err
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{crt},
+		}
+	}
+
+	s := &httpServer{
+		ln: ln,
+		inner: &http.Server{
+			Handler:           handler,
+			TLSConfig:         tlsConfig,
+			ReadHeaderTimeout: 10 * time.Second,
+			ErrorLog:          log.New(&nilWriter{}, "", 0),
+		},
+	}
+
+	if tlsConfig != nil {
+		go s.inner.ServeTLS(s.ln, "", "")
+	} else {
+		go s.inner.Serve(s.ln)
+	}
+
+	return s, nil
 }
 
 // 创建一个新的http-flv服务实例
@@ -50,21 +114,25 @@ func newHttpflvServer(
 		allowOrigin: allowOrigin,
 	}
 
-	router := gin.New()
-	httpSetTrustedProxies(router, trustedProxies)
+	s.innerMonitor = newContextMonitor(s)
+	s.innerMonitor.run(context.Background())
+
+	router := gin.Default()
+	//httpSetTrustedProxies(router, trustedProxies)
+	router.NoRoute(s.onRequest)
 
 	// 需要实现一个服务器的OnRequest功能
-	router.NoRoute(httpLoggerMiddleware(s), httpServerHeaderMiddleware, s.onRequest)
+	//router.NoRoute(httpLoggerMiddleware(s), httpServerHeaderMiddleware, s.onRequest)
 
-	// 创建http-server对象处理请求.
+	// TODO: 检查timeout
 	var err error
-	s.inner, err = newHTTPServer(
+	s.inner, err = newInnerHttpServer(
 		address,
-		readTimeout,
 		serverCert,
 		serverKey,
 		router,
 	)
+
 	if err != nil {
 		s.Log(logger.Error, "failed to create inner http server")
 		return nil, err
@@ -82,11 +150,10 @@ func (s *flvHTTPServer) close() {
 	s.inner.close()
 }
 
+// 回调函数 用于处理请求
 func (s *flvHTTPServer) onRequest(ctx *gin.Context) {
-	ctx.Writer.Header().Set("Access-Control-Allow-Origin", s.allowOrigin)
-	ctx.Writer.Header().Set("Access-Control-Allow-Origin", s.allowOrigin)
-	ctx.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-
+	ctx.Header("Access-Control-Allow-Origin", s.allowOrigin)
+	ctx.Header("Access-Control-Allow-Credentials", "true")
 	// 设置一些http头
 	switch ctx.Request.Method {
 	case http.MethodOptions:
@@ -101,23 +168,54 @@ func (s *flvHTTPServer) onRequest(ctx *gin.Context) {
 		return
 	}
 
-	// 先返回个Hello world试试?
-	// 成功了!!!
-	//if _, err := ctx.Writer.WriteString("Hello world!"); err != nil {
-	//	s.Log(logger.Error, "failed to write response")
-	//}
-	// TODO: 下一步就是, 根据用户请求地址, 创建一个flv muxer, 持续往出发flv tag
+	pa := ctx.Request.URL.Path[1:]
 
-	s.Log(logger.Debug, "onRequest: %v", ctx.Request.URL.Path)
-	//pa := ctx.Request.URL.Path[1:]
+	var sname string
+
+	switch {
+	case strings.HasSuffix(pa, ".flv") && !strings.ContainsAny(pa, "/"):
+		sname = pa[:len(pa)-4]
+
+	default:
+		ctx.Writer.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	//user, pass, hasCredentials := ctx.Request.BasicAuth()
 	//
-	//// 我先试试gin的context能提供什么信息?
+	//res := s.pathManager.getPathConf(pathGetPathConfReq{
+	//	name:    sname,
+	//	publish: false,
+	//	credentials: authCredentials{
+	//		query: ctx.Request.URL.RawQuery,
+	//		ip:    net.ParseIP(ctx.ClientIP()),
+	//		user:  user,
+	//		pass:  pass,
+	//		proto: authProtocolWebRTC,
+	//	},
+	//})
+	//if res.err != nil {
+	//	if terr, ok := res.err.(pathErrAuth); ok {
+	//		if !hasCredentials {
+	//			ctx.Header("WWW-Authenticate", `Basic realm="mediamtx"`)
+	//			ctx.Writer.WriteHeader(http.StatusUnauthorized)
+	//			return
+	//		}
 	//
-	//switch {
-	//case pa == "", pa == "favicon.ico":
+	//		s.Log(logger.Info, "authentication error: %v", terr.wrapped)
+	//		ctx.Writer.WriteHeader(http.StatusUnauthorized)
+	//		return
+	//	}
+	//
+	//	ctx.Writer.WriteHeader(http.StatusNotFound)
 	//	return
-	//
-	//case strings.HasSuffix(pa, ".flv"):
-	//
 	//}
+
+	//s.Log(logger.Info, "before handleRequest")
+	// 把这个请求丢给对应的flvMultiplexer处理
+	s.parent.handleRequest(flvMuxerHandleRequestReq{ // 转发flv处理请求, 创建一个flvWriter
+		sname: sname,
+		ctx:   ctx,
+	})
+
 }
