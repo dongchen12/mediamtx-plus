@@ -8,6 +8,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/formatprocessor"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/pion/rtp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -234,7 +235,7 @@ func (m *flvMuxer) runInner(innerCtx context.Context, ready chan struct{}) error
 		pathName: m.pathName,
 		skipAuth: true,
 	})
-	if res.err != nil { // 添加reader失败了
+	if res.err != nil {
 		return res.err
 	}
 
@@ -243,7 +244,7 @@ func (m *flvMuxer) runInner(innerCtx context.Context, ready chan struct{}) error
 	defer m.path.readerRemove(pathReaderRemoveReq{author: m})
 
 	go func() {
-		err := m.pullStream(res.stream, res.path, res.err)
+		err := m.pullStream(res.stream)
 		if err != nil {
 			m.Log(logger.Error, "pull from source failed")
 		}
@@ -266,7 +267,6 @@ func (m *flvMuxer) runInner(innerCtx context.Context, ready chan struct{}) error
 			}
 
 		case <-innerCtx.Done():
-			// 关闭所有readers
 			// TODO: 这里需要关闭flvWriters
 			return fmt.Errorf("terminated")
 		}
@@ -298,20 +298,56 @@ func (m *flvMuxer) processRequest(req *flvMuxerHandleRequestReq) {
 }
 
 // 用于持续拉去RTP packet到muxer的buffer中, 并封装为flv tag, 待请求
-func (m *flvMuxer) pullStream(st *stream, pa *path, err error) error {
+func (m *flvMuxer) pullStream(st *stream) error {
+	//for med, _ := range st.smedias {
+	//	m.Log(logger.Error, "med: "+string(med.Type))
+	//	for _, fm := range med.Formats {
+	//		m.Log(logger.Error, "\tformat: "+fm.Codec())
+	//	}
+	//}
+
 	var videoFormatH264 *formats.H264
 	videoMedia := st.medias().FindFormat(&videoFormatH264)
+	videoMedia.Formats
+	//temp := make([]*rtp.Packet, 10)
 
 	// 先暂时实现一个H264的方案, 之后需要添加H265, Opus等
 	if videoFormatH264 != nil {
 		st.readerAdd(m, videoMedia, videoFormatH264, func(unit formatprocessor.Unit) {
 			pkts := unit.GetRTPPackets()
-			for _, pkt := range pkts {
-				p := packFlv(pkt)
+			h264Unit := unit.(*formatprocessor.UnitH264)
+			m.Log(logger.Info, "")
+			//h264Unit.AU
+			//m.packetBuffer.Range(func(key, value any) bool { // 遍历map的每一个key, 往里面放flv包
+			//	select { // 如果对应的chan有空闲的buffer, 将p放进去, 如果没有, 直接丢, 不要阻塞在这个地方
+			//	case value.(chan *formatprocessor.Unit) <- &unit:
+			//	default:
+			//	}
+			//	return true
+			//})
+			for _, pkt := range pkts { // 自己处理太麻烦了
 				m.packetBuffer.Range(func(key, value any) bool { // 遍历map的每一个key, 往里面放flv包
 					select { // 如果对应的chan有空闲的buffer, 将p放进去, 如果没有, 直接丢, 不要阻塞在这个地方
-					case value.(chan *flvPacket) <- p:
-						m.Log(logger.Info, "write flv packet to writer packet queue...")
+					case value.(chan *rtp.Packet) <- pkt:
+					default:
+					}
+					return true
+				})
+			}
+		})
+	}
+
+	var audioFormatMPEG4Audio *formats.MPEG4Audio
+	audioMedia := st.medias().FindFormat(&audioFormatMPEG4Audio)
+
+	if audioMedia != nil {
+		//m.Log(logger.Error, "read audio")
+		st.readerAdd(m, audioMedia, audioFormatMPEG4Audio, func(unit formatprocessor.Unit) {
+			pkts := unit.GetRTPPackets()
+			for _, pkt := range pkts {
+				m.packetBuffer.Range(func(key, value any) bool {
+					select {
+					case value.(chan *rtp.Packet) <- pkt:
 					default:
 					}
 					return true

@@ -234,7 +234,7 @@ webrtcICETCPMuxAddress:
 # another entry.
 paths:
   test:
-    source: rtsp://localhost:8550/livestream
+    source: rtsp://localhost:8550/test
     sourceProtocol: tcp
     sourceAnyPortEnable: no
 
