@@ -308,15 +308,14 @@ func (m *flvMuxer) pullStream(st *stream) error {
 
 	var videoFormatH264 *formats.H264
 	videoMedia := st.medias().FindFormat(&videoFormatH264)
-	videoMedia.Formats
+	//videoMedia.Formats
 	//temp := make([]*rtp.Packet, 10)
 
 	// 先暂时实现一个H264的方案, 之后需要添加H265, Opus等
 	if videoFormatH264 != nil {
 		st.readerAdd(m, videoMedia, videoFormatH264, func(unit formatprocessor.Unit) {
 			pkts := unit.GetRTPPackets()
-			h264Unit := unit.(*formatprocessor.UnitH264)
-			m.Log(logger.Info, "")
+			//h264Unit := unit.(*formatprocessor.UnitH264)
 			//h264Unit.AU
 			//m.packetBuffer.Range(func(key, value any) bool { // 遍历map的每一个key, 往里面放flv包
 			//	select { // 如果对应的chan有空闲的buffer, 将p放进去, 如果没有, 直接丢, 不要阻塞在这个地方

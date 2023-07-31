@@ -63,7 +63,6 @@ func unmarshalICEFragment(buf []byte) ([]*webrtc.ICECandidateInit, error) {
 			}
 		}
 	}
-
 	return ret, nil
 }
 

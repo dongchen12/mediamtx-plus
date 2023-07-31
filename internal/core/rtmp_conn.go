@@ -806,7 +806,6 @@ func (c *rtmpConn) runPublish(u *url.URL) error {
 	var medias media.Medias
 	var videoMedia *media.Media
 	var audioMedia *media.Media
-
 	if videoFormat != nil {
 		videoMedia = &media.Media{
 			Type:    media.TypeVideo,

@@ -1,13 +1,15 @@
 package core
 
 import (
+	"encoding/binary"
 	"errors"
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtph264"
 	"github.com/bluenviron/gortsplib/v3/pkg/formats/rtpmpeg4audio"
+	"github.com/bluenviron/mediacommon/pkg/codecs/h264"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/gwuhaolin/livego/utils/pio"
 	"github.com/pion/rtp"
-	"strconv"
 	"time"
 )
 
@@ -20,16 +22,6 @@ const (
 	FLV_TAG_VIDEO      = byte(9)
 	FLV_TAG_SCRIPTDATA = byte(12)
 )
-
-type flvTagHeader struct {
-	tagType   uint8
-	timeStamp uint32
-}
-
-type flvTag struct {
-	header  flvTagHeader
-	payload []byte
-}
 
 // FlvWriter 从buffer中持续写flv tag到远端
 type FlvWriter struct {
@@ -78,21 +70,12 @@ func NewFlvWriter(ctx *gin.Context, parent *flvMuxer) (*FlvWriter, error) {
 
 	ctx.Header("Access-Control-Allow-Origin", "*")
 	ctx.Header("Access-Control-Allow-Credentials", "true")
-	ctx.Header("Transfer-Encoding", "chunked")
-	ctx.Header("Content-Type", "video/x-flv")
-
+	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header("Content-Length", "-1")
 	ctx.Writer.WriteHeader(200)
 
-	hdrLen := strconv.FormatInt(int64(len(flvHeader)), 16)
-	_, err := ctx.Writer.Write([]byte(hdrLen + "\r\n"))
-	if err != nil {
-		return nil, err
-	}
-	_, err = ctx.Writer.Write(append(flvHeader, byte('\r'), byte('\n')))
-	if err != nil {
-		writer.Log(logger.Error, "error writing flv header: "+err.Error()+", content length: "+ctx.Writer.Header().Get("Content-Length"))
-		return nil, err
-	}
+	ctx.Writer.Write(flvHeader)
+	ctx.Writer.Write([]byte{0, 0, 0, 0})
 
 	chPacketFlvWriter := make(chan *rtp.Packet, 256)
 	parent.packetBuffer.Store(ctx, chPacketFlvWriter)
@@ -124,77 +107,60 @@ func (w *FlvWriter) run() (err error) {
 		return err
 	}
 
+	//writer := w.ctx.Writer
+	//var start = false
+	var startVideoTimeStamp uint32 = 0
+	//va
+	//r startAudioTimeStamp uint32 = 0
+	var prevTagSize = 0
+
 	for {
 		pkt, _ := <-packetQueue.(chan *rtp.Packet)
+
 		if pkt.PayloadType == 96 { // 收到的是H264的视频包
-			//w.Log(logger.Error, "payload hdr: 0x%02X 0x%02X 0x%02X 0x%02X", pkt.Payload[0], pkt.Payload[1], pkt.Payload[2], pkt.Payload[3])
-			if _, _, err := h264Decoder.Decode(pkt); err != nil {
-				//if err == rtph264.ErrMorePacketsNeeded {
-				//	continue
-				//} else {
-				//	return err
-				//}
+			switch h264.NALUType(pkt.Payload[0] & 0x1F) {
+			case h264.NALUTypeSPS:
+				w.Log(logger.Error, "SPS")
+			case h264.NALUTypePPS:
+				w.Log(logger.Error, "PPS")
+			}
+			if nalus, _, err := h264Decoder.DecodeUntilMarker(pkt); err != nil {
+				if err == rtph264.ErrMorePacketsNeeded {
+					continue
+				} else {
+					return err
+				}
 			} else {
 				// TODO: 将nalus打包成一个flv tag并发送
-				//for _, nalu := range nalus {
-				//	//tagType := FLV_TAG_VIDEO
-				//	//StreamID := []byte{0x00, 0x00, 0x00}
-				//	//w.Log(logger.Info, "nalu hdr: 0x%02X", nalu[0]&0x1f)
-				//}
+				dataBytes, err := h264.AVCCMarshal(nalus)
+				if err != nil {
+					return err
+				}
+				dataLen := len(dataBytes)
+				if startVideoTimeStamp == 0 {
+					startVideoTimeStamp = pkt.Timestamp
+				}
+				h := make([]byte, 11)
+				timestamp := pkt.Timestamp - startVideoTimeStamp
+				tagType := byte(0x09)
+				streamID := uint32(0)
+				timeStampbase := timestamp & 0xffffff
+				timestampExt := timestamp >> 24 & 0xff
+
+				pio.PutU8(h[0:1], tagType)
+				pio.PutI24BE(h[1:4], int32(dataLen))
+				pio.PutI24BE(h[4:7], int32(timeStampbase))
+				pio.PutU8(h[7:8], uint8(timestampExt))
+				pio.PutI24BE(h[8:11], int32(streamID))
+
+				tsbuf := make([]byte, 4)
+				binary.BigEndian.PutUint32(tsbuf, uint32(prevTagSize))
+				prevTagSize = dataLen + 11
 			}
 		} else if pkt.PayloadType == 97 { // 收到的是mpeg-4 audio的音频包
 
 		}
-		//if nalus, ts, err := h264Decoder.
-		//unit, _ := <-packetQueue.(chan *formatprocessor.Unit)
-		//w.Log(logger.Info, "getting unit...")
-		//for _, nalu := range (*unit).(*formatprocessor.UnitH264).AU {
-		//	w.Log(logger.Info, "nalu header byte: %02X", nalu[0])
-		//}
-
-		//if ok {
-		//	w.Log(logger.Info, pkt.String())
-		//	if startTimeStamp == 0 {
-		//		startTimeStamp = pkt.Timestamp
-		//	}
-		//	if !pkt.Marker { // 不是视频帧的最后一包
-		//		tempList = append(tempList, pkt) // 包放进临时列表中
-		//	} else { // 视频帧的最后一包, 需要合成一帧
-		//		ts := pkt.Timestamp - startTimeStamp // 生成时间戳
-		//		var tagType uint8
-		//		if pkt.PayloadType == 96 { // 生成tag类型标签
-		//			tagType = FLV_TAG_VIDEO
-		//		} else if pkt.PayloadType == 97 {
-		//			tagType = FLV_TAG_AUDIO
-		//		} else {
-		//			tagType = FLV_TAG_SCRIPTDATA
-		//		}
-		//	}
-		//	// TODO: 从rtp包中获生成flv tag所需的所有数据
-		//	/*
-		//		已获取的:
-		//		1. timestamp
-		//		2. tagType
-		//		3. streamID
-		//		4. filter
-		//		5. reserved
-		//		6. datasize(最后获取)
-		//	*/
-		//	preTagSize = 0
-		//
-		//	pio.PutI32BE(w.buf[:4], int32(preTagSize))
-		//	_, err = w.ctx.Writer.Write(w.buf[:4]) // 写prevtagsize
-		//	if err != nil {
-		//		w.Log(logger.Error, "error writing prev tag size: "+err.Error())
-		//		return err
-		//	}
-		//
-		//}
 	}
-}
-
-func (tg *flvTag) marshall() []byte {
-	return nil
 }
 
 func (w *FlvWriter) Log(level logger.Level, format string, args ...interface{}) {
